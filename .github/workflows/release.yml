@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches VERSION file
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          FILE="$(tr -d '[:space:]' < VERSION)"
+          if [ "$TAG" != "$FILE" ]; then
+            echo "Tag v$TAG does not match VERSION file ($FILE)" >&2
+            exit 1
+          fi
+
+      - name: Run tests
+        run: ./test.sh
+
+      - name: Build universal app
+        run: ./build.sh --universal
+
+      - name: Package
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          ditto -c -k --keepParent ClaudeDeck.app "ClaudeDeck-$VERSION.zip"
+          shasum -a 256 "ClaudeDeck-$VERSION.zip" | awk '{print $1}' > sha256.txt
+          echo "SHA256: $(cat sha256.txt)"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          gh release create "v$VERSION" "ClaudeDeck-$VERSION.zip" \
+            --title "ClaudeDeck v$VERSION" \
+            --generate-notes
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "TAP_GITHUB_TOKEN secret not set — skipping tap update." >&2
+            echo "Update the cask manually or add a PAT with repo scope as TAP_GITHUB_TOKEN." >&2
+            exit 0
+          fi
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          SHA="$(cat sha256.txt)"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/belkacem759/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/claude-deck.rb <<EOF
+          cask "claude-deck" do
+            version "$VERSION"
+            sha256 "$SHA"
+
+            url "https://github.com/belkacem759/claude-deck/releases/download/v#{version}/ClaudeDeck-#{version}.zip"
+            name "ClaudeDeck"
+            desc "Menu bar overview of running Claude Code sessions"
+            homepage "https://github.com/belkacem759/claude-deck"
+
+            app "ClaudeDeck.app"
+
+            caveats <<~EOS
+              ClaudeDeck is not notarized. If macOS blocks it, either install with
+                brew install --cask claude-deck --no-quarantine
+              or clear the quarantine flag:
+                xattr -dr com.apple.quarantine /Applications/ClaudeDeck.app
+            EOS
+          end
+          EOF
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/claude-deck.rb
+          git commit -m "claude-deck $VERSION"
+          git push
