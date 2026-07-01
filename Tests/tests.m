@@ -6,6 +6,7 @@
 
 #import <Foundation/Foundation.h>
 #import "../Sources/ClaudeDeckCore.h"
+#import "../Sources/CDPtySession.h"
 
 static int failures = 0;
 
@@ -108,6 +109,44 @@ static void TestTitleFallback(void) {
     CHECK([s.title isEqualToString:@"myproj"], "title falls back to folder name");
 }
 
+// Delegate that collects pty output and signals exit.
+@interface PtyCollector : NSObject <CDPtySessionDelegate>
+@property (nonatomic, strong) NSMutableString *output;
+@property (nonatomic) BOOL exited;
+@end
+@implementation PtyCollector
+- (instancetype)init {
+    if ((self = [super init])) _output = [NSMutableString string];
+    return self;
+}
+- (void)ptySession:(CDPtySession *)session didReceiveData:(NSData *)data {
+    NSString *s = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (s) [self.output appendString:s];
+}
+- (void)ptySessionDidExit:(CDPtySession *)session {
+    self.exited = YES;
+}
+@end
+
+static void TestPtyRoundTrip(void) {
+    PtyCollector *collector = [PtyCollector new];
+    CDPtySession *pty = [[CDPtySession alloc] initWithCommand:@"printf 'marker-%d\\n' 42"
+                                                          cwd:NSTemporaryDirectory()];
+    pty.delegate = collector;
+    CHECK([pty start], "pty starts");
+    CHECK(pty.childPid > 0, "child pid assigned");
+
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:15];
+    while (!collector.exited && deadline.timeIntervalSinceNow > 0) {
+        [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode
+                            beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    CHECK(collector.exited, "pty exited within deadline");
+    CHECK([collector.output containsString:@"marker-42"],
+          "pty output contains marker, got: %s", collector.output.UTF8String);
+    CHECK(!pty.running, "pty not running after exit");
+}
+
 static void TestEmptyDir(void) {
     // Point at a directory with no sessions/ at all.
     setenv("CLAUDE_DECK_HOME", "/nonexistent-claude-deck-test", 1);
@@ -127,6 +166,7 @@ int main(void) {
         TestScan();
         TestTitleFallback();
         TestEmptyDir();
+        TestPtyRoundTrip();
 
         [NSFileManager.defaultManager removeItemAtPath:gRoot error:nil];
 

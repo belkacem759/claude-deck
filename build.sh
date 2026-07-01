@@ -18,12 +18,13 @@ fi
 clang -fobjc-arc -O2 -Wall -Werror \
     "${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}" \
     -DCLAUDEDECK_VERSION="\"$VERSION\"" \
-    -framework Cocoa \
-    Sources/ClaudeDeckCore.m Sources/main.m \
+    -framework Cocoa -framework WebKit \
+    Sources/ClaudeDeckCore.m Sources/CDPtySession.m Sources/CDTerminalWindowController.m Sources/main.m \
     -o "$APP"
 
 rm -rf "$BUNDLE"
-mkdir -p "$BUNDLE/Contents/MacOS"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+cp -R Resources/ "$BUNDLE/Contents/Resources/"
 cp Info.plist "$BUNDLE/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$BUNDLE/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$VERSION" "$BUNDLE/Contents/Info.plist"

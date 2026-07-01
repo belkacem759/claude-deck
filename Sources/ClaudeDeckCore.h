@@ -44,3 +44,7 @@ CDHost CDHostOfPid(pid_t pid, NSString **ttyOut);
 // Compare dotted version strings ("1.2.3", tolerates a leading "v").
 // Returns <0 if a<b, 0 if equal, >0 if a>b.
 NSInteger CDCompareVersions(NSString *a, NSString *b);
+
+// Bring the session's hosting terminal to the front (async): exact
+// Terminal.app tab via tty match, Cursor window via project folder.
+void CDFocusSession(CDSession *session);

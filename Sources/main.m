@@ -9,6 +9,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import "ClaudeDeckCore.h"
+#import "CDTerminalWindowController.h"
 
 #ifndef CLAUDEDECK_VERSION
 #define CLAUDEDECK_VERSION "0.0.0-dev"
@@ -17,52 +18,6 @@
 static NSString *const kRepoSlug = @"belkacem759/claude-deck";
 static NSString *const kDefaultsLastUpdateCheck = @"lastUpdateCheckAt";
 static const NSTimeInterval kUpdateCheckInterval = 24 * 60 * 60;
-
-#pragma mark - Focusing the hosting terminal
-
-static BOOL FocusTerminalTab(NSString *tty) {
-    if (tty.length == 0) return NO;
-    NSString *src = [NSString stringWithFormat:
-        @"tell application \"Terminal\"\n"
-         "  repeat with w in windows\n"
-         "    repeat with t in tabs of w\n"
-         "      if tty of t is equal to \"%@\" then\n"
-         "        set selected tab of w to t\n"
-         "        set index of w to 1\n"
-         "        activate\n"
-         "        return \"found\"\n"
-         "      end if\n"
-         "    end repeat\n"
-         "  end repeat\n"
-         "end tell\n"
-         "return \"notfound\"", tty];
-    NSString *result = CDRunTool(@"/usr/bin/osascript", @[@"-e", src]);
-    return [result isEqualToString:@"found"];
-}
-
-static void FocusCursorWindow(NSString *cwd) {
-    CDRunTool(@"/usr/bin/open", @[@"-a", @"Cursor", cwd]);
-}
-
-static void FocusSession(CDSession *s) {
-    pid_t pid = s.pid;
-    NSString *cwd = s.cwd;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSString *tty = @"";
-        CDHost host = CDHostOfPid(pid, &tty);
-        switch (host) {
-            case CDHostTerminalApp:
-                if (!FocusTerminalTab(tty)) CDRunTool(@"/usr/bin/open", @[@"-a", @"Terminal"]);
-                break;
-            case CDHostCursor:
-                FocusCursorWindow(cwd);
-                break;
-            case CDHostUnknown:
-                if (!FocusTerminalTab(tty)) FocusCursorWindow(cwd);
-                break;
-        }
-    });
-}
 
 #pragma mark - App delegate
 
@@ -76,7 +31,15 @@ static void FocusSession(CDSession *s) {
 
 @implementation CDAppDelegate
 
+static BOOL gSelfTest = NO;
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
+    if (gSelfTest) {
+        [CDTerminalWindowController.shared runSelfTestAndExit];
+        return;
+    }
+    [self buildMainMenu];
+
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
 
     NSMenu *menu = [NSMenu new];
@@ -99,6 +62,61 @@ static void FocusSession(CDSession *s) {
 - (void)refresh {
     self.sessions = CDScanSessions();
     [self updateStatusButton];
+}
+
+// Minimal main menu so Cmd+C/V/W/Q and text editing work in the window.
+- (void)buildMainMenu {
+    NSMenu *mainMenu = [NSMenu new];
+
+    NSMenuItem *appItem = [NSMenuItem new];
+    [mainMenu addItem:appItem];
+    NSMenu *appMenu = [NSMenu new];
+    [appMenu addItemWithTitle:@"Quit ClaudeDeck" action:@selector(terminate:) keyEquivalent:@"q"];
+    appItem.submenu = appMenu;
+
+    NSMenuItem *fileItem = [NSMenuItem new];
+    [mainMenu addItem:fileItem];
+    NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    NSMenuItem *newSession = [[NSMenuItem alloc] initWithTitle:@"New Session…"
+                                                        action:@selector(newSessionFromMenu:)
+                                                 keyEquivalent:@"n"];
+    newSession.target = self;
+    [fileMenu addItem:newSession];
+    [fileMenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"w"];
+    fileItem.submenu = fileMenu;
+
+    NSMenuItem *editItem = [NSMenuItem new];
+    [mainMenu addItem:editItem];
+    NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
+    [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+    [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+    [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+    editItem.submenu = editMenu;
+
+    NSApp.mainMenu = mainMenu;
+}
+
+- (void)newSessionFromMenu:(id)sender {
+    [CDTerminalWindowController.shared startNewSession];
+}
+
+- (void)openWindow:(id)sender {
+    [CDTerminalWindowController.shared showAndActivate];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    NSInteger running = [CDTerminalWindowController.shared runningSessionCount];
+    if (running == 0) return NSTerminateNow;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = [NSString stringWithFormat:@"%ld session%@ still running in ClaudeDeck",
+                         (long)running, running == 1 ? @"" : @"s"];
+    alert.informativeText = @"Quitting ends these Claude Code sessions. Sessions in external terminals are not affected.";
+    [alert addButtonWithTitle:@"Quit and End Sessions"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return NSTerminateCancel;
+    [CDTerminalWindowController.shared terminateAllSessions];
+    return NSTerminateNow;
 }
 
 - (void)updateStatusButton {
@@ -169,6 +187,12 @@ static void FocusSession(CDSession *s) {
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [self refresh];
     [menu removeAllItems];
+
+    NSMenuItem *open = [[NSMenuItem alloc] initWithTitle:@"Open ClaudeDeck"
+                                                  action:@selector(openWindow:) keyEquivalent:@""];
+    open.target = self;
+    [menu addItem:open];
+    [menu addItem:[NSMenuItem separatorItem]];
 
     if (self.availableUpdateVersion.length > 0) {
         NSString *title = [NSString stringWithFormat:@"⬆ Update available — %@", self.availableUpdateVersion];
@@ -255,7 +279,12 @@ static void FocusSession(CDSession *s) {
 
 - (void)sessionClicked:(NSMenuItem *)item {
     CDSession *s = item.representedObject;
-    if (s) FocusSession(s);
+    if (!s) return;
+    if ([CDTerminalWindowController.shared isInternalPid:s.pid]) {
+        [CDTerminalWindowController.shared selectInternalPid:s.pid];
+    } else {
+        CDFocusSession(s);
+    }
 }
 
 @end
@@ -276,6 +305,9 @@ int main(int argc, const char *argv[]) {
         }
         // `--print` debug mode: dump scanned sessions to stdout and exit.
         for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "--selftest") == 0) {
+                gSelfTest = YES;
+            }
             if (strcmp(argv[i], "--version") == 0) {
                 printf("%s\n", CLAUDEDECK_VERSION);
                 return 0;

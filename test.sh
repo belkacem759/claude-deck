@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 clang -fobjc-arc -O1 -Wall -Werror \
     -framework Foundation \
-    Sources/ClaudeDeckCore.m Tests/tests.m \
+    Sources/ClaudeDeckCore.m Sources/CDPtySession.m Tests/tests.m \
     -o claudedeck-tests
 
 status=0

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #1a1b1e; }
+  #term { height: 100%; }
+  .xterm .xterm-viewport { background-color: transparent !important; }
+</style>
+<link rel="stylesheet" href="vendor/xterm.css">
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+</head>
+<body>
+<div id="term"></div>
+<script>
+  const term = new Terminal({
+    fontFamily: 'Menlo, Monaco, monospace',
+    fontSize: 13,
+    cursorBlink: true,
+    scrollback: 20000,
+    allowProposedApi: true,
+    macOptionIsMeta: true,
+    theme: {
+      background: '#1a1b1e',
+      foreground: '#d4d4d8',
+      cursor: '#e4e4e7',
+      selectionBackground: '#3f3f46',
+    },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('term'));
+
+  const post = (msg) => window.webkit.messageHandlers.pty.postMessage(msg);
+
+  term.onData((data) => post({ type: 'data', data }));
+
+  function doFit() {
+    fit.fit();
+    post({ type: 'resize', cols: term.cols, rows: term.rows });
+  }
+  new ResizeObserver(() => doFit()).observe(document.body);
+
+  // Native -> JS: base64-encoded pty output.
+  window.cdWrite = (b64) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    term.write(bytes);
+  };
+  window.cdFocus = () => term.focus();
+  window.cdNotifyExit = () => {
+    term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n');
+  };
+
+  doFit();
+  term.focus();
+  post({ type: 'ready' });
+</script>
+</body>
+</html>

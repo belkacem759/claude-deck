@@ -131,6 +131,50 @@ CDHost CDHostOfPid(pid_t pid, NSString **ttyOut) {
     return CDHostUnknown;
 }
 
+static BOOL FocusTerminalTab(NSString *tty) {
+    if (tty.length == 0) return NO;
+    NSString *src = [NSString stringWithFormat:
+        @"tell application \"Terminal\"\n"
+         "  repeat with w in windows\n"
+         "    repeat with t in tabs of w\n"
+         "      if tty of t is equal to \"%@\" then\n"
+         "        set selected tab of w to t\n"
+         "        set index of w to 1\n"
+         "        activate\n"
+         "        return \"found\"\n"
+         "      end if\n"
+         "    end repeat\n"
+         "  end repeat\n"
+         "end tell\n"
+         "return \"notfound\"", tty];
+    NSString *result = CDRunTool(@"/usr/bin/osascript", @[@"-e", src]);
+    return [result isEqualToString:@"found"];
+}
+
+static void FocusCursorWindow(NSString *cwd) {
+    CDRunTool(@"/usr/bin/open", @[@"-a", @"Cursor", cwd]);
+}
+
+void CDFocusSession(CDSession *s) {
+    pid_t pid = s.pid;
+    NSString *cwd = s.cwd;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *tty = @"";
+        CDHost host = CDHostOfPid(pid, &tty);
+        switch (host) {
+            case CDHostTerminalApp:
+                if (!FocusTerminalTab(tty)) CDRunTool(@"/usr/bin/open", @[@"-a", @"Terminal"]);
+                break;
+            case CDHostCursor:
+                FocusCursorWindow(cwd);
+                break;
+            case CDHostUnknown:
+                if (!FocusTerminalTab(tty)) FocusCursorWindow(cwd);
+                break;
+        }
+    });
+}
+
 NSInteger CDCompareVersions(NSString *a, NSString *b) {
     NSCharacterSet *v = [NSCharacterSet characterSetWithCharactersInString:@"vV"];
     a = [a stringByTrimmingCharactersInSet:v];
