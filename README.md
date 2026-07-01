@@ -27,8 +27,12 @@ that in your menu bar.
 ### Homebrew
 
 ```sh
-brew install --cask belkacem759/tap/claude-deck --no-quarantine
+brew install --cask belkacem759/tap/claude-deck
+xattr -dr com.apple.quarantine /Applications/ClaudeDeck.app
 ```
+
+(The `xattr` line clears Gatekeeper quarantine — needed because the app is
+not notarized; see below.)
 
 ### Direct download
 

@@ -70,9 +70,8 @@ jobs:
             app "ClaudeDeck.app"
 
             caveats <<~EOS
-              ClaudeDeck is not notarized. If macOS blocks it, either install with
-                brew install --cask claude-deck --no-quarantine
-              or clear the quarantine flag:
+              ClaudeDeck is not notarized. If macOS blocks the first launch,
+              clear the quarantine flag:
                 xattr -dr com.apple.quarantine /Applications/ClaudeDeck.app
             EOS
           end
